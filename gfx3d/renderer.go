@@ -1189,6 +1189,20 @@ func (r *Renderer) ShotEffects(name string) []sgbview.ShotFX {
 	return entry.anim.ShotFX()
 }
 
+// DeathEffects — эффекты гибели объекта по имени меша: их .whe модели
+// привязывает к таймлайнам смерти (кровь, искры, вспышки). Сцена запускает
+// их, когда сущность перестаёт быть живой.
+func (r *Renderer) DeathEffects(name string) []sgbview.FXEvent {
+	if r == nil || name == "" {
+		return nil
+	}
+	entry := r.anims[name]
+	if entry == nil || entry.anim == nil {
+		return nil
+	}
+	return entry.anim.DeathFX()
+}
+
 // MarkerPoint — мировая точка маркера объекта (ствол, дуло) с учётом его
 // текущей позы и сдвига по карте. Второй конец эффекта сцена считает сама.
 func (r *Renderer) MarkerPoint(name, marker string) ([3]float64, bool) {

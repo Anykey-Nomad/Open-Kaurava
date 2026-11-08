@@ -46,6 +46,7 @@ func (p *Gameplay) resetSession() {
 	p.capture = map[string]*captureVisual{}
 	p.reinforce = map[string]*reinforceTask{}
 	p.fxShots = map[string]uint64{}
+	p.fxDead = map[string]bool{}
 	p.shotFX = nil
 	p.shotDefs = map[string][]sgbview.ShotFX{}
 	p.fxFiles = map[string]*fx.File{}

@@ -36,6 +36,10 @@ type activeShotFX struct {
 	// end — второй конец эффекта в мире, hasEnd — он вообще есть.
 	end    [3]float64
 	hasEnd bool
+	// delay — сколько ещё ждать до первого шага симуляции: событие .whe
+	// привязано к моменту клипа, а не к его началу, и кровь смерти должна
+	// появиться на своей секунде.
+	delay float64
 	// spans — Length ленты означает долю зазора между концами.
 	spans bool
 }
@@ -93,13 +97,49 @@ func (p *Gameplay) spawnWeaponFX(shooter entities.Entity, object gameplayObject)
 			effect.end = p.shotEndPoint(shooter, target, shooter.LastShotHit)
 			effect.hasEnd = true
 		}
-		p.shotFX = append(p.shotFX, effect)
-		if len(p.shotFX) > maxShotFX {
-			p.shotFX = p.shotFX[len(p.shotFX)-maxShotFX:]
-		}
+		p.addShotFX(effect)
 		spawned = true
 	}
 	return spawned
+}
+
+// spawnDeathFX запускает эффекты гибели модели из её .whe: кровь, искры и
+// вспышки, которые игра привязывает к таймлайнам смерти. Время события —
+// секунды от начала клипа, поэтому эффект ждёт своего момента, а не
+// вспыхивает весь сразу (см. delay у activeShotFX).
+func (p *Gameplay) spawnDeathFX(entity entities.Entity, object gameplayObject) {
+	if p.world == nil || object.meshName == "" {
+		return
+	}
+	for _, event := range p.world.DeathEffects(object.meshName) {
+		file := p.loadShotFXFile(event.Effect)
+		if file == nil {
+			continue
+		}
+		sim := fx.NewSimulation(file)
+		origin, found := p.world.MarkerPoint(object.meshName, event.Marker)
+		if !found {
+			// Маркера нет в позе трупа — эффект всё равно нужен: играем
+			// его у корпуса, а не теряем.
+			origin = [3]float64{object.center[0], object.center[1], object.center[2] + object.zOffset*0.5}
+		}
+		p.addShotFX(activeShotFX{
+			sim:    sim,
+			life:   event.Time + sim.Lifetime(),
+			origin: origin,
+			yaw:    entity.Facing + sgbview.ModelFacingOffset,
+			delay:  event.Time,
+		})
+	}
+}
+
+// addShotFX добавляет играющий эффект и держит их число в пределе: залп
+// отряда не должен утопить кадр в частицах.
+func (p *Gameplay) addShotFX(effect activeShotFX) {
+	p.shotFX = append(p.shotFX, effect)
+	if len(p.shotFX) > maxShotFX {
+		p.shotFX = p.shotFX[len(p.shotFX)-maxShotFX:]
+	}
 }
 
 // shotEndPoint — куда приходит выстрел. Попал — в центр цели; промахнулся —
@@ -141,6 +181,16 @@ func (p *Gameplay) stepShotFX(dt float64) {
 		shot.age += dt
 		if shot.age >= shot.life {
 			continue
+		}
+		// Эффект с задержкой стоит, пока клип не дошёл до своего
+		// момента: иначе кровь смерти брызнула бы в первом кадре.
+		if shot.delay > 0 {
+			shot.delay -= dt
+			if shot.delay > 0 {
+				kept = append(kept, shot)
+				continue
+			}
+			shot.delay = 0
 		}
 		shot.sim.Step(dt)
 		kept = append(kept, shot)

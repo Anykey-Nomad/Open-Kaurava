@@ -30,6 +30,9 @@ func (p *Gameplay) updateFX(dt float64) {
 	if p.fxShots == nil {
 		p.fxShots = map[string]uint64{}
 	}
+	if p.fxDead == nil {
+		p.fxDead = map[string]bool{}
+	}
 	p.fxClock += dt
 	smoke := p.fxClock >= fxSmokeInterval
 	if smoke {
@@ -43,6 +46,18 @@ func (p *Gameplay) updateFX(dt float64) {
 		entity, ok := p.hud.factory.Get(o.id)
 		if !ok {
 			continue
+		}
+		// Гибель: у сущности сменился признак жизни — играем эффекты,
+		// которые .whe модели привязывает к смерти. Первый кадр объекта
+		// только запоминает состояние: уже лежащий труп не должен
+		// брызнуть кровью при входе в сценарий.
+		if dead := !entity.Alive; dead {
+			if was, known := p.fxDead[o.id]; known && !was {
+				p.spawnDeathFX(entity, *o)
+			}
+			p.fxDead[o.id] = true
+		} else if p.fxDead[o.id] {
+			p.fxDead[o.id] = false
 		}
 		// Вспышка на каждый выстрел: счётчик выстрелов у бойца вырос.
 		if shots := entity.Shots; shots != p.fxShots[o.id] {

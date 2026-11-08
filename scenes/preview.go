@@ -86,10 +86,12 @@ type Gameplay struct {
 	// reinforce — идущее пополнение отрядов по SquadID (reinforce.go).
 	reinforce map[string]*reinforceTask
 	// fx — частицы эффектов (вспышки, дым, пыль); fxShots — последние
-	// увиденные счётчики выстрелов по объектам, fxClock — таймер
-	// дымовых проверок (см. fx.go).
+	// увиденные счётчики выстрелов по объектам, fxDead — была ли сущность
+	// уже мёртвой в прошлом кадре (по нему ловится момент гибели),
+	// fxClock — таймер дымовых проверок (см. fx.go).
 	fx      *fx.System
 	fxShots map[string]uint64
+	fxDead  map[string]bool
 	// shotFX — играющие сейчас эффекты выстрелов из настоящих файлов
 	// DATA:ART/FX: каждый живёт от своего выстрела до конца клипа.
 	shotFX []activeShotFX
@@ -134,6 +136,7 @@ func NewGameplay(lib *mods.Library, world *gfx3d.Renderer) *Gameplay {
 		capture:     map[string]*captureVisual{},
 		fx:          fx.New(),
 		fxShots:     map[string]uint64{},
+		fxDead:      map[string]bool{},
 		shotDefs:    map[string][]sgbview.ShotFX{},
 		fxFiles:     map[string]*fx.File{},
 	}
