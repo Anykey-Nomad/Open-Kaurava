@@ -708,6 +708,13 @@ type DescriptorImageInfo struct {
 	ImageLayout ImageLayout
 }
 
+// DescriptorBufferInfo — VkDescriptorBufferInfo (24 байта).
+type DescriptorBufferInfo struct {
+	Buffer Buffer
+	Offset uint64
+	Range  uint64
+}
+
 // WriteDescriptorSet — VkWriteDescriptorSet (64 байта).
 type WriteDescriptorSet struct {
 	Type            StructureType

@@ -3,20 +3,19 @@ package ui
 import (
 	"fmt"
 	"image"
+	"image/color"
 
 	"golang.org/x/image/math/fixed"
 )
 
-// Атлас глифов: одноканальная (A8) картинка, в которой каждый символ
-// растеризован один раз и лежит в своей ячейке.
+// Атлас RGBA: каждый глиф и UI-ресурс занимает отдельный участок изображения.
 //
 // Размер фиксирован: перелокация не нужна, поэтому GPU-картина создаётся
 // один раз и перезаливается только при появлении новых глифов.
 const (
 	// AtlasSize — сторона атласа в пикселях.
 	AtlasSize = 2048
-	// atlasPad — запас вокруг глифа (px): нужен линейной фильтрации,
-	// иначе соседние ячейки «протекают» в край глифа.
+	// atlasPad — запас между ячейками для линейной фильтрации.
 	atlasPad = 2
 	// atlasFirstX — первая свободная колонка: пиксель (0,0) занят
 	// белым маркером для сплошных прямоугольников UI.
@@ -41,13 +40,14 @@ type glyphKey struct {
 	r  rune
 }
 
-// Atlas — A8-атлас глифов: байты пикселей + кэш метрик.
+// Atlas — RGBA-атлас глифов и UI-изображений.
 type Atlas struct {
 	W, H int
-	// Pix — данные картинки (W*H байт, один канал покрытия).
+	// Pix — плотные RGBA8-пиксели, построчно сверху вниз.
 	Pix []byte
 
 	glyphs map[glyphKey]Glyph
+	images map[string]Glyph
 	dirty  bool
 
 	// Укладка по полкам: x — следующая колонка, y — верх текущей полки,
@@ -57,16 +57,16 @@ type Atlas struct {
 
 // NewAtlas создаёт пустой атлас.
 //
-// Пиксель (0,0) — белый маркер: им рисуются сплошные прямоугольники UI
-// (см. Draw.WhiteUV), поэтому он заранее заполнен единицей.
+// Пиксель (0,0) — непрозрачный белый маркер для сплошных прямоугольников.
 func NewAtlas() *Atlas {
-	pix := make([]byte, AtlasSize*AtlasSize)
-	pix[0] = 0xFF
+	pix := make([]byte, AtlasSize*AtlasSize*4)
+	pix[0], pix[1], pix[2], pix[3] = 0xFF, 0xFF, 0xFF, 0xFF
 	return &Atlas{
 		W:      AtlasSize,
 		H:      AtlasSize,
 		Pix:    pix,
 		glyphs: map[glyphKey]Glyph{},
+		images: map[string]Glyph{},
 		x:      atlasFirstX,
 	}
 }
@@ -74,12 +74,133 @@ func NewAtlas() *Atlas {
 // Dirty сообщает, что в атласе появились новые глифы и его надо перезалить на GPU.
 func (a *Atlas) Dirty() bool { return a.dirty }
 
+// LookupImage возвращает ранее загруженный регион без изменения атласа.
+func (a *Atlas) LookupImage(key string) (Glyph, bool) {
+	region, ok := a.images[key]
+	return region, ok
+}
+
 // ClearDirty снимает признак «нужно перезалить».
 func (a *Atlas) ClearDirty() { a.dirty = false }
+
+// MipLevel — один уровень мип-цепочки атласа.
+type MipLevel struct {
+	W, H int
+	// Pix — плотные RGBA8-пиксели уровня, построчно сверху вниз.
+	Pix []byte
+}
+
+// Levels возвращает число уровней полной мип-цепочки атласа.
+func (a *Atlas) Levels() int {
+	side := a.W
+	if a.H > side {
+		side = a.H
+	}
+	levels := 1
+	for side > 1 {
+		side /= 2
+		levels++
+	}
+	return levels
+}
+
+// MipChain строит мип-уровни атласа для GPU.
+//
+// Нулевой уровень — сам Pix (без копии). Каждый следующий — усреднение 2×2,
+// причём цвет считается предумноженным на альфу: иначе прозрачные пиксели
+// подмешивали бы чёрный и на уменьшенном арте HUD появлялась бы тёмная
+// кайма (те самые чёрные точки).
+func (a *Atlas) MipChain() []MipLevel {
+	levels := make([]MipLevel, 0, a.Levels())
+	levels = append(levels, MipLevel{W: a.W, H: a.H, Pix: a.Pix})
+	src, w, h := a.Pix, a.W, a.H
+	for w > 1 || h > 1 {
+		nw, nh := w/2, h/2
+		if nw < 1 {
+			nw = 1
+		}
+		if nh < 1 {
+			nh = 1
+		}
+		dst := make([]byte, nw*nh*4)
+		for y := 0; y < nh; y++ {
+			for x := 0; x < nw; x++ {
+				var r, g, b, alpha, count uint32
+				for dy := 0; dy < 2; dy++ {
+					sy := y*2 + dy
+					if sy >= h {
+						continue
+					}
+					for dx := 0; dx < 2; dx++ {
+						sx := x*2 + dx
+						if sx >= w {
+							continue
+						}
+						off := (sy*w + sx) * 4
+						pa := uint32(src[off+3])
+						r += uint32(src[off]) * pa / 255
+						g += uint32(src[off+1]) * pa / 255
+						b += uint32(src[off+2]) * pa / 255
+						alpha += pa
+						count++
+					}
+				}
+				off := (y*nw + x) * 4
+				if count == 0 {
+					continue
+				}
+				if alpha > 0 {
+					dst[off+0] = byte(min(255, r*255/alpha))
+					dst[off+1] = byte(min(255, g*255/alpha))
+					dst[off+2] = byte(min(255, b*255/alpha))
+				}
+				dst[off+3] = byte(min(255, alpha/count))
+			}
+		}
+		levels = append(levels, MipLevel{W: nw, H: nh, Pix: dst})
+		src, w, h = dst, nw, nh
+	}
+	return levels
+}
 
 // WhiteUV — UV белого пикселя (0,0): им рисуются сплошные прямоугольники.
 func (a *Atlas) WhiteUV() (u, v float32) {
 	return 0.5 / float32(a.W), 0.5 / float32(a.H)
+}
+
+// Image добавляет картинку в атлас один раз на ключ и возвращает её область.
+func (a *Atlas) Image(key string, src image.Image) (Glyph, error) {
+	if region, ok := a.images[key]; ok {
+		return region, nil
+	}
+	if src == nil || key == "" {
+		return Glyph{}, fmt.Errorf("пустая UI-картинка")
+	}
+	bounds := src.Bounds()
+	w, h := bounds.Dx(), bounds.Dy()
+	if w <= 0 || h <= 0 {
+		return Glyph{}, fmt.Errorf("пустой размер UI-картинки %dx%d", w, h)
+	}
+	x, y, err := a.pack(w, h+atlasPad*2)
+	if err != nil {
+		return Glyph{}, err
+	}
+	x += atlasPad
+	y += atlasPad
+	for row := 0; row < h; row++ {
+		for col := 0; col < w; col++ {
+			pixel := color.NRGBAModel.Convert(src.At(bounds.Min.X+col, bounds.Min.Y+row)).(color.NRGBA)
+			off := ((y+row)*a.W + x + col) * 4
+			a.Pix[off+0] = pixel.R
+			a.Pix[off+1] = pixel.G
+			a.Pix[off+2] = pixel.B
+			a.Pix[off+3] = pixel.A
+		}
+	}
+	region := Glyph{X: x, Y: y, W: w, H: h}
+	a.images[key] = region
+	a.dirty = true
+	return region, nil
 }
 
 // Glyph возвращает метрики глифа, растеризуя его при первом обращении.
@@ -120,8 +241,7 @@ func (a *Atlas) Glyph(f *Font, px int, r rune) (Glyph, error) {
 	if err != nil {
 		return g, err
 	}
-	// Глиф кладём в ячейку с отступом (atlasPad) — там же, откуда его потом
-	// читают UV: иначе картинка и её координаты разойдутся на pad пикселей.
+	// Глиф кладём с отступом: он отделяет UV от соседних ячеек.
 	a.blit(x+atlasPad, y+atlasPad, w, h, mask, maskp)
 
 	g.X, g.Y, g.W, g.H = x+atlasPad, y+atlasPad, w, h
@@ -159,35 +279,13 @@ func (a *Atlas) pack(w, h int) (int, int, error) {
 	return x, y, nil
 }
 
-// blit копирует покрытие глифа в атлас.
-//
-// mask — маска, нарисованная шрифтом; maskp — её пиксель, соответствующий
-// левому верхнему углу прямоугольника глифа.
+// blit копирует маску глифа в RGBA-атлас.
 func (a *Atlas) blit(x, y, w, h int, mask image.Image, maskp image.Point) {
-	dst := y*a.W + x
-
-	switch m := mask.(type) {
-	case *image.Alpha:
-		// Быстрый путь: у альфа-маски пиксели идут подряд.
-		b := m.Rect.Min
-		for j := 0; j < h; j++ {
-			sy := maskp.Y + j - b.Y
-			sx := maskp.X - b.X
-			if sy < 0 || sy >= m.Rect.Dy() {
-				continue
-			}
-			off := sy*m.Stride + sx
-			if sx < 0 || off < 0 || off+w > len(m.Pix) {
-				continue
-			}
-			copy(a.Pix[dst+j*a.W:dst+j*a.W+w], m.Pix[off:off+w])
-		}
-	default:
-		for j := 0; j < h; j++ {
-			for i := 0; i < w; i++ {
-				_, _, _, alpha := mask.At(maskp.X+i, maskp.Y+j).RGBA()
-				a.Pix[dst+j*a.W+i] = byte(alpha >> 8)
-			}
+	for j := 0; j < h; j++ {
+		for i := 0; i < w; i++ {
+			_, _, _, alpha := mask.At(maskp.X+i, maskp.Y+j).RGBA()
+			off := ((y+j)*a.W + x + i) * 4
+			a.Pix[off+0], a.Pix[off+1], a.Pix[off+2], a.Pix[off+3] = 0xFF, 0xFF, 0xFF, byte(alpha>>8)
 		}
 	}
 }

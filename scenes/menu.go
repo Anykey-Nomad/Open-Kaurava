@@ -1,6 +1,7 @@
 package scenes
 
 import (
+	"github.com/Anykey-Nomad/Open-Kaurava/loc"
 	"math"
 
 	"github.com/Anykey-Nomad/Open-Kaurava/mods"
@@ -18,9 +19,8 @@ type Menu struct {
 func NewMenu(lib *mods.Library) *Menu {
 	return &Menu{
 		items: []item{
-			{label: "Начать"},
-			{label: "Сценарии"},
-			{label: "Выход"},
+			{label: loc.T("Scenarios")},
+			{label: loc.T("Exit")},
 		},
 		lib: lib,
 	}
@@ -45,11 +45,9 @@ func (m *Menu) Update(c *scene.Ctx, dt float64) {
 	}
 
 	switch {
-	case m.items[0].clicked: // Начать
-		c.Switch("gameplay")
-	case m.items[1].clicked: // Сценарии
+	case m.items[0].clicked: // Сценарии
 		c.Switch("scenarios")
-	case m.items[2].clicked: // Выход
+	case m.items[1].clicked: // Выход
 		c.Quit()
 	}
 }
@@ -62,34 +60,34 @@ func (m *Menu) Draw(c *scene.Ctx) {
 	pulse := 0.85 + 0.15*float32(math.Sin(m.t*2))
 	col := [4]float32{ColAccent[0] * pulse, ColAccent[1] * pulse, ColAccent[2] * pulse, 1}
 	c.CenterText("Open-Kaurava", 150, 56, col)
-	c.CenterText("движок на чистом Go: Vulkan без CGO, шрифт из TTF, сцены", 186, 20, ColTextDim)
+	c.CenterText(loc.T("pure Go engine: Vulkan without CGO, TTF font, scenes"), 186, 20, ColTextDim)
 
 	for i := range m.items {
 		m.items[i].draw(c, 26)
 	}
 
-	c.CenterText("сцена: главное меню", float32(c.H)-36, 18, ColTextDim)
+	c.CenterText(loc.T("scene: main menu"), float32(c.H)-36, 18, ColTextDim)
 	c.CenterText(m.moduleStatus(), float32(c.H)-62, 18, ColTextDim)
 }
 
 // moduleStatus — строка о состоянии модуля игры.
 func (m *Menu) moduleStatus() string {
 	if m.lib == nil {
-		return "модуль: не загружен"
+		return loc.T("module: not loaded")
 	}
 	state, err, _ := m.lib.Status()
 	switch state {
 	case mods.StateLoading:
-		return "модуль: загрузка…"
+		return loc.T("module: loading…")
 	case mods.StateFailed:
 		if err != nil {
-			return "модуль: ошибка — " + err.Error()
+			return loc.T("module: error — ") + err.Error()
 		}
-		return "модуль: ошибка"
+		return loc.T("module: error")
 	}
 	mod := m.lib.Module()
 	if mod == nil {
-		return "модуль: не найден"
+		return loc.T("module: not found")
 	}
-	return "модуль: " + mod.Name + " (" + mod.UIName + ")"
+	return loc.T("module: ") + mod.Name + " (" + mod.UIName + ")"
 }

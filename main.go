@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/Anykey-Nomad/Open-Kaurava/gfx3d"
+	"github.com/Anykey-Nomad/Open-Kaurava/lua"
 	"github.com/Anykey-Nomad/Open-Kaurava/mods"
 	"github.com/Anykey-Nomad/Open-Kaurava/scene"
 	"github.com/Anykey-Nomad/Open-Kaurava/scenes"
@@ -47,9 +48,10 @@ func main() {
 		resizeTest = flag.Bool("resize-test", false, "сам менять размер окна и проверять пересоздание swapchain")
 		osCursor   = flag.Bool("os-cursor", false, "оставить системный курсор вместо рисуемого крестика")
 		fontPath   = flag.String("font", "", "путь к шрифту TTF/OTF (по умолчанию — системный)")
-		startScene = flag.String("scene", "menu", "сцена на старте: menu|scenarios|players|preview|gameplay")
+		startScene = flag.String("scene", "menu", "сцена на старте: menu|scenarios|players|gameplay")
 		dowPath    = flag.String("dow", "", "путь к установленной Dawn of War (по умолчанию — ищется сама)")
 		scenario   = flag.String("scenario", "", "сценарий для 3D-просмотра (имя файла .sgb)")
+		script     = flag.String("script", "", "Lua-скрипт игровой логики (on_update/on_input)")
 	)
 	flag.Parse()
 
@@ -62,6 +64,7 @@ func main() {
 		validation: *validation, vulkanLib: *vulkanLib, logEvents: *logEvents,
 		present: *present, verbose: *verbose, resizeTest: *resizeTest, osCursor: *osCursor,
 		font: *fontPath, scene: *startScene, dow: *dowPath, scenario: *scenario,
+		script: *script,
 	}); err != nil {
 		fmt.Fprintln(os.Stderr, "ошибка:", err)
 		os.Exit(1)
@@ -84,6 +87,7 @@ type args struct {
 	scene         string
 	dow           string
 	scenario      string
+	script        string
 }
 
 func run(a args) error {
@@ -265,13 +269,26 @@ func run(a args) error {
 	manager.Register(scenes.NewMenu(library))
 	manager.Register(scenes.NewScenarios(library))
 	manager.Register(scenes.NewPlayers(library))
-	manager.Register(scenes.NewPreview(library, world))
-	manager.Register(scenes.NewGameplay())
+	manager.Register(scenes.NewGameplay(library, world))
 	if err := manager.SwitchNow(a.scene); err != nil {
 		return err
 	}
 	if a.verbose {
 		log.Printf("сцены: %v, старт: %s", manager.Names(), manager.Current())
+	}
+
+	// --- 10a. Lua-хуки игровой логики ---------------------------------------
+	// Скрипт подписывается через on_update(fn) и on_input(fn) (регистрируются
+	// в VM через lua.Register); движок зовёт хуки каждый кадр и на каждое
+	// событие ввода. VM создаётся в одном потоке вместе с окном.
+	luavm := lua.New()
+	defer luavm.Close()
+	hooks := lua.NewHooks(luavm)
+	if a.script != "" {
+		if err := luavm.DoFile(a.script); err != nil {
+			return fmt.Errorf("lua-скрипт %s: %w", a.script, err)
+		}
+		log.Printf("lua-скрипт загружен: %s", a.script)
 	}
 
 	// --- 11. Цикл кадров -----------------------------------------------------
@@ -344,6 +361,11 @@ func run(a args) error {
 		scroll = 0
 		for _, ev := range win.PollEvents() {
 			drag.Feed(ev)
+			if le, ok := luaEvent(ev); ok {
+				if err := hooks.Input(le); err != nil {
+					log.Printf("lua on_input: %v", err)
+				}
+			}
 			switch ev.Kind {
 			case window.EventResize:
 				needRecreate = true
@@ -386,6 +408,10 @@ func run(a args) error {
 		for _, d := range drag.TakeDrags() {
 			rx, ry, rw, rh := d.Rect()
 			log.Printf("драг: кнопка=%d рамка (%d, %d) %dx%d", d.Button, rx, ry, rw, rh)
+			input.DragEnded = true
+			input.DragButton = d.Button
+			input.DragFromX, input.DragFromY = d.X0, d.Y0
+			input.DragX, input.DragY, input.DragW, input.DragH = rx, ry, rw, rh
 		}
 		input.MouseX, input.MouseY = win.MousePos()
 		input.MoveX, input.MoveY = input.MouseX-prevX, input.MouseY-prevY
@@ -398,6 +424,7 @@ func run(a args) error {
 		input.Held = heldKeys(held)
 		if x, y, w, h, ok := drag.Rect(); ok {
 			input.Dragging = true
+			input.DragCurrentButton = drag.Button()
 			input.DragX, input.DragY, input.DragW, input.DragH = x, y, w, h
 		}
 
@@ -446,13 +473,12 @@ func run(a args) error {
 		}
 
 		// Сценарий из командной строки: как только дерево модуля готово,
-		// выбираем его и открываем нужную сцену — 3D-просмотр или, если она
-		// запрошена, экран выбора игроков.
+		// выбираем его и открываем нужную сцену или экран выбора игроков.
 		if pendingScenario != "" {
 			if sc, ok := library.FindScenario(pendingScenario); ok {
 				scenes.Select(sc.Name, sc.Path)
 				pendingScenario = ""
-				target := "preview"
+				target := "gameplay"
 				if a.scene == "players" {
 					target = "players"
 				}
@@ -476,6 +502,9 @@ func run(a args) error {
 			DT:    dt,
 			// Анимация цвета: доказывает, что кадры реально идут.
 			Clear: animateColor(time.Since(start)),
+		}
+		if err := hooks.Update(dt); err != nil {
+			log.Printf("lua on_update: %v", err)
 		}
 		manager.Update(&ctx, dt)
 		manager.Draw(&ctx)
@@ -562,6 +591,30 @@ func run(a args) error {
 		return fmt.Errorf("resize-test: пересозданий swapchain=%d, ожидалось минимум 2", recreations)
 	}
 	return api.DeviceWaitIdle(device)
+}
+
+// luaEvent превращает событие окна в событие для Lua-хуков on_input.
+// ok=false для служебных событий (resize, close, expose) — они не ввод.
+func luaEvent(ev window.Event) (lua.Event, bool) {
+	switch ev.Kind {
+	case window.EventKeyDown, window.EventKeyUp,
+		window.EventMouseMove, window.EventMouseDown, window.EventMouseUp,
+		window.EventScroll:
+	default:
+		return lua.Event{}, false
+	}
+	out := lua.Event{
+		Kind:     ev.Kind.String(),
+		IsRepeat: ev.Repeat,
+		X:        ev.X,
+		Y:        ev.Y,
+		Button:   ev.Button,
+		Scroll:   ev.Scroll,
+	}
+	if ev.Kind == window.EventKeyDown || ev.Kind == window.EventKeyUp {
+		out.Key = ev.Key.String()
+	}
+	return out, true
 }
 
 // heldKeys перечисляет зажатые клавиши (для камеры: WASD).

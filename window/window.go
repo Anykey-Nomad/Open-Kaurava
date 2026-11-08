@@ -297,6 +297,7 @@ const (
 	KeyEnter
 	KeyTab
 	KeyBackspace
+	KeyDelete
 	KeyLeft
 	KeyRight
 	KeyUp
@@ -323,8 +324,8 @@ const (
 
 var keyNames = map[Key]string{
 	KeyEscape: "Escape", KeySpace: "Space", KeyEnter: "Enter", KeyTab: "Tab",
-	KeyBackspace: "Backspace",
-	KeyLeft:      "Left", KeyRight: "Right", KeyUp: "Up", KeyDown: "Down",
+	KeyBackspace: "Backspace", KeyDelete: "Delete",
+	KeyLeft: "Left", KeyRight: "Right", KeyUp: "Up", KeyDown: "Down",
 	KeyLeftShift: "LShift", KeyRightShift: "RShift",
 	KeyLeftCtrl: "LCtrl", KeyRightCtrl: "RCtrl",
 	KeyLeftAlt: "LAlt", KeyRightAlt: "RAlt",

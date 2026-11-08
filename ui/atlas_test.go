@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image"
+	"image/color"
 	"testing"
 
 	"golang.org/x/image/font"
@@ -23,11 +24,6 @@ func testFont(t *testing.T) *Font {
 	return f
 }
 
-// TestGlyphBaseline проверяет главное: глиф садится на базовую линию.
-//
-// dr из opentype — это image.Rectangle в ЦЕЛЫХ пикселях относительно точки
-// постановки: dr.Min.Y — верх глифа (выше базовой линии, т.е. отрицательный),
-// dr.Max.Y — низ. Поэтому BX/BY должны быть в пикселях, а не в 1/64 пикселя.
 func TestGlyphBaseline(t *testing.T) {
 	f := testFont(t)
 	const px = 32
@@ -36,7 +32,6 @@ func TestGlyphBaseline(t *testing.T) {
 		t.Fatalf("Face(%d): %v", px, err)
 	}
 	a := NewAtlas()
-
 	for _, r := range []rune{'A', 'o', 'g', 'у', 'W'} {
 		dr, _, _, _, ok := face.Glyph(fixed.Point26_6{}, r)
 		if !ok {
@@ -46,18 +41,8 @@ func TestGlyphBaseline(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Glyph(%q): %v", r, err)
 		}
-		if g.BY != float32(dr.Min.Y) {
-			t.Errorf("%q: BY = %v, ожидалось %v (dr.Min.Y)", r, g.BY, float32(dr.Min.Y))
-		}
-		if g.BX != float32(dr.Min.X) {
-			t.Errorf("%q: BX = %v, ожидалось %v (dr.Min.X)", r, g.BX, float32(dr.Min.X))
-		}
-		// Верх глифа выше базовой линии, низ — на ней или ниже (для выносных).
-		if g.BY >= 0 {
-			t.Errorf("%q: верх глифа %v не выше базовой линии", r, g.BY)
-		}
-		if bottom := g.BY + float32(g.H); bottom != float32(dr.Max.Y) {
-			t.Errorf("%q: низ глифа %v, ожидалось %v (dr.Max.Y)", r, bottom, float32(dr.Max.Y))
+		if g.BY != float32(dr.Min.Y) || g.BX != float32(dr.Min.X) {
+			t.Errorf("%q: смещение (%v,%v), ожидалось (%v,%v)", r, g.BX, g.BY, dr.Min.X, dr.Min.Y)
 		}
 		if g.W != dr.Dx() || g.H != dr.Dy() {
 			t.Errorf("%q: размер %dx%d, ожидалось %dx%d", r, g.W, g.H, dr.Dx(), dr.Dy())
@@ -65,50 +50,36 @@ func TestGlyphBaseline(t *testing.T) {
 	}
 }
 
-// TestGlyphInAtlas проверяет, что прямоугольник глифа в атласе совпадает
-// с реально записанными пикселями: запас (atlasPad) не должен смещать
-// картинку относительно UV-координат.
 func TestGlyphInAtlas(t *testing.T) {
 	f := testFont(t)
-	const px = 24
 	a := NewAtlas()
-
-	g, err := a.Glyph(f, px, 'B')
+	g, err := a.Glyph(f, 24, 'B')
 	if err != nil {
 		t.Fatalf("Glyph: %v", err)
 	}
-	if g.W <= 0 || g.H <= 0 {
-		t.Fatalf("глиф пустой: %dx%d", g.W, g.H)
+	if g.W <= 0 || g.H <= 0 || g.X < 0 || g.Y < 0 || g.X+g.W > a.W || g.Y+g.H > a.H {
+		t.Fatalf("invalid glyph bounds: %+v", g)
 	}
-	if g.X < 0 || g.Y < 0 || g.X+g.W > a.W || g.Y+g.H > a.H {
-		t.Fatalf("глиф %d,%d %dx%d выходит за атлас %dx%d", g.X, g.Y, g.W, g.H, a.W, a.H)
-	}
-
-	// В прямоугольнике глифа должно быть что-то нарисованное.
 	ink := 0
 	for y := g.Y; y < g.Y+g.H; y++ {
 		for x := g.X; x < g.X+g.W; x++ {
-			if a.Pix[y*a.W+x] > 0 {
+			if a.Pix[(y*a.W+x)*4+3] > 0 {
 				ink++
 			}
 		}
 	}
 	if ink == 0 {
-		t.Error("в прямоугольнике глифа в атласе нет ни одного закрашенного пикселя")
+		t.Error("в прямоугольнике глифа нет пикселей")
 	}
-
-	// Левый столбец ячейки — это запас: он обязан быть пустым.
-	if a.Pix[g.Y*a.W+g.X-1] != 0 {
-		t.Error("пиксель слева от глифа не пуст: картинка и UV-координаты разошлись")
+	if a.Pix[(g.Y*a.W+g.X-1)*4+3] != 0 {
+		t.Error("пиксель слева от глифа не пуст")
 	}
 }
 
-// TestWhiteMarker проверяет маркер сплошной заливки: он должен быть белым
-// и лежать в левом верхнем углу атласа.
 func TestWhiteMarker(t *testing.T) {
 	a := NewAtlas()
-	if a.Pix[0] != 0xFF {
-		t.Errorf("маркер в (0,0) = %d, ожидалось 255", a.Pix[0])
+	if got := a.Pix[:4]; got[0] != 255 || got[1] != 255 || got[2] != 255 || got[3] != 255 {
+		t.Errorf("white marker RGBA = %v", got)
 	}
 	u, v := a.WhiteUV()
 	if u <= 0 || u >= 1 || v <= 0 || v >= 1 {
@@ -116,17 +87,35 @@ func TestWhiteMarker(t *testing.T) {
 	}
 }
 
-// TestTextWidth сверяет ширину строки с замером шрифта.
+func TestAtlasImageKeepsRGBAAndCachesKey(t *testing.T) {
+	a := NewAtlas()
+	img := image.NewNRGBA(image.Rect(0, 0, 2, 1))
+	img.SetNRGBA(0, 0, color.NRGBA{R: 210, G: 30, B: 70, A: 128})
+	img.SetNRGBA(1, 0, color.NRGBA{R: 20, G: 190, B: 80, A: 255})
+	region, err := a.Image("panel", img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := a.Image("panel", image.NewRGBA(image.Rect(0, 0, 5, 5)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again != region {
+		t.Fatalf("cache returned different region: %+v vs %+v", region, again)
+	}
+	off := (region.Y*a.W + region.X) * 4
+	if got := a.Pix[off : off+4]; got[0] != 210 || got[1] != 30 || got[2] != 70 || got[3] != 128 {
+		t.Errorf("first pixel RGBA = %v", got)
+	}
+}
+
 func TestTextWidth(t *testing.T) {
 	f := testFont(t)
-	a := NewAtlas()
-	d := NewDraw(a, f)
-
+	d := NewDraw(NewAtlas(), f)
 	const px = 20
 	const s = "Привет, Vulkan"
 	got := d.Text(s, 10, 40, px, [4]float32{1, 1, 1, 1})
 	want := f.Measure(s, px)
-	// Разница в единицу — накопление округлений float32 по перу.
 	if diff := got - want; diff > 1.5 || diff < -1.5 {
 		t.Errorf("ширина строки = %v, ожидалось %v", got, want)
 	}
@@ -135,8 +124,6 @@ func TestTextWidth(t *testing.T) {
 	}
 }
 
-// TestNoKerningGap проверяет, что между глифами нет разрывов из-за
-// потерянного левого выноса (BX) — символы идут вплотную по перу.
 func TestNoKerningGap(t *testing.T) {
 	f := testFont(t)
 	const px = 32
@@ -146,7 +133,6 @@ func TestNoKerningGap(t *testing.T) {
 	}
 	a := NewAtlas()
 	d := NewDraw(a, f)
-
 	const s = "AB"
 	for _, r := range s {
 		dr, _, _, _, ok := face.Glyph(fixed.Point26_6{}, r)
@@ -157,27 +143,22 @@ func TestNoKerningGap(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Glyph: %v", err)
 		}
-		// Левый вынос символа — целое число пикселей (не 1/64 пикселя).
-		if diff := g.BX - float32(dr.Min.X); diff != 0 {
-			t.Errorf("%q: BX=%v, ожидалось %v", r, g.BX, float32(dr.Min.X))
+		if g.BX != float32(dr.Min.X) {
+			t.Errorf("%q: BX=%v, ожидалось %v", r, g.BX, dr.Min.X)
 		}
 	}
-
-	// Перо сдвигается ровно на ширину символа: между квадами не должно
-	// быть «дырки» из-за потерянного левого выноса.
 	d.Text(s, 0, 0, px, [4]float32{1, 1, 1, 1})
-	if d.Len() != 12 { // два квада по шесть вершин
+	if d.Len() != 12 {
 		t.Fatalf("в батче %d вершин, ожидалось 12", d.Len())
 	}
 	gA, err := a.Glyph(f, px, 'A')
 	if err != nil {
-		t.Fatalf("Glyph: %v", err)
+		t.Fatalf("Glyph A: %v", err)
 	}
 	gB, err := a.Glyph(f, px, 'B')
 	if err != nil {
-		t.Fatalf("Glyph: %v", err)
+		t.Fatalf("Glyph B: %v", err)
 	}
-	// Левый край квада B = перо после A + левый вынос B.
 	step := d.Verts[6].X - d.Verts[0].X
 	want := gA.Advance + gB.BX - gA.BX
 	if diff := step - want; diff > 0.01 || diff < -0.01 {
@@ -185,7 +166,6 @@ func TestNoKerningGap(t *testing.T) {
 	}
 }
 
-// TestFontMetricsSmoke — короткая проверка, что метрики шрифта читаются.
 func TestFontMetricsSmoke(t *testing.T) {
 	f := testFont(t)
 	face, err := f.Face(16)

@@ -1,5 +1,15 @@
 package ui
 
+import (
+	"bytes"
+	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+
+	"dow-mod-studio/imgdec"
+)
+
 // Vertex — вершина UI-квадра.
 //
 // Раскладка обязана совпадать с internal/shaders/quad.vert:
@@ -56,6 +66,58 @@ func (d *Draw) quad(x, y, w, h, u0, v0, u1, v1 float32, c [4]float32) {
 		Vertex{x1, y1, u1, v1, c[0], c[1], c[2], c[3]},
 		Vertex{x, y1, u0, v1, c[0], c[1], c[2], c[3]},
 	)
+}
+
+// LoadImage decodes a UI texture (TGA/DDS/RTX/PNG) into the frame's shared atlas.
+func (d *Draw) LoadImage(key string, data []byte) (Glyph, error) {
+	if d == nil || d.Atlas == nil {
+		return Glyph{}, fmt.Errorf("ui: frame has no atlas")
+	}
+	if region, ok := d.Atlas.LookupImage(key); ok {
+		return region, nil
+	}
+	img, err := decodeImage(data)
+	if err != nil {
+		return Glyph{}, fmt.Errorf("ui: decode %s: %w", key, err)
+	}
+	return d.Atlas.Image(key, img)
+}
+
+// decodeImage декодирует файл текстуры UI. Игровые форматы определяются по
+// magic-байтам: .rtx — контейнер "Relic Chunky" (скомпилированные текстуры
+// ремастера), .dds — заголовок DDS. Затем пробуется TGA и кодеки image
+// (PNG/JPEG).
+func decodeImage(data []byte) (image.Image, error) {
+	switch {
+	case len(data) >= 12 && string(data[:12]) == "Relic Chunky":
+		return imgdec.Decode("rtx", data)
+	case len(data) >= 4 && string(data[:4]) == "DDS ":
+		return imgdec.Decode("dds", data)
+	}
+	if img, err := DecodeTGA(data); err == nil {
+		return img, nil
+	}
+	img, _, err := image.Decode(bytes.NewReader(data))
+	return img, err
+}
+
+// Image рисует текстурное изображение из атласа с заданными размерами.
+func (d *Draw) Image(region Glyph, x, y, w, h float32, tint [4]float32) {
+	if w <= 0 || h <= 0 || d.Atlas == nil || region.W <= 0 || region.H <= 0 {
+		return
+	}
+	u0 := float32(region.X) / float32(d.Atlas.W)
+	v0 := float32(region.Y) / float32(d.Atlas.H)
+	u1 := float32(region.X+region.W) / float32(d.Atlas.W)
+	v1 := float32(region.Y+region.H) / float32(d.Atlas.H)
+	d.quad(x, y, w, h, u0, v0, u1, v1, tint)
+}
+
+// DecodeImage декодирует картинку так же, как LoadImage: TGA, а также
+// .rtx/.dds ремастера. Нужен там, где важны пиксели, а не готовая область
+// атласа (арт панелей: над панелью лежит прозрачная надставка кадра).
+func DecodeImage(data []byte) (image.Image, error) {
+	return decodeImage(data)
 }
 
 // Rect рисует сплошной прямоугольник (цвет берётся из атласа белый пиксель).

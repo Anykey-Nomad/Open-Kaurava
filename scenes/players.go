@@ -2,6 +2,7 @@ package scenes
 
 import (
 	"fmt"
+	"github.com/Anykey-Nomad/Open-Kaurava/loc"
 	"path/filepath"
 
 	"dow-mod-studio/racebps"
@@ -144,7 +145,7 @@ func (p *Players) Update(c *scene.Ctx, dt float64) {
 		if idx >= len(p.races)+1 {
 			break
 		}
-		label := "Случайная раса"
+		label := loc.T("Random race")
 		if idx > 0 {
 			label = p.races[idx-1].Label()
 		}
@@ -183,13 +184,13 @@ func (p *Players) Update(c *scene.Ctx, dt float64) {
 
 	// Кнопки внизу.
 	btnY := float32(c.H) - 96
-	p.start.label = "Начать"
+	p.start.label = loc.T("Start")
 	p.start.x = playersLeft
 	p.start.y = btnY
 	p.start.w = 260
 	p.start.h = 48
 	p.start.update(c)
-	p.back.label = "Назад"
+	p.back.label = loc.T("Back")
 	p.back.x = playersLeft + 280
 	p.back.y = btnY
 	p.back.w = 220
@@ -198,7 +199,7 @@ func (p *Players) Update(c *scene.Ctx, dt float64) {
 
 	if p.start.clicked || c.Key(window.KeyEnter) {
 		p.confirm()
-		c.Switch("preview")
+		c.Switch("gameplay")
 		return
 	}
 	if p.back.clicked || c.Key(window.KeyEscape) {
@@ -352,26 +353,26 @@ func (p *Players) confirm() {
 // Draw рисует списки слотов и рас, кнопки «свой игрок», «начать» и «назад».
 func (p *Players) Draw(c *scene.Ctx) {
 	c.Rect(0, 0, float32(c.W), float32(c.H), ColBG)
-	c.CenterText("Выбор игроков", 64, 40, ColText)
+	c.CenterText(loc.T("Player selection"), 64, 40, ColText)
 	c.CenterText(p.subtitle(), 94, 20, ColTextDim)
 
 	if p.err != nil {
-		c.CenterText("не удалось прочитать сценарий", float32(c.H)/2-20, 26, ColTextWarn)
+		c.CenterText(loc.T("failed to read the scenario"), float32(c.H)/2-20, 26, ColTextWarn)
 		c.CenterText(p.err.Error(), float32(c.H)/2+16, 18, ColTextDim)
 		return
 	}
 	if p.loading || p.lib == nil {
-		c.CenterText("загрузка сценария…", float32(c.H)/2, 26, ColText)
+		c.CenterText(loc.T("loading scenario…"), float32(c.H)/2, 26, ColText)
 		return
 	}
 	if len(p.slots) == 0 {
 		if SelectedPath == "" {
-			c.CenterText("сценарий не выбран", float32(c.H)/2, 26, ColTextWarn)
-			c.CenterText("вернитесь к списку сценариев и выберите карту", float32(c.H)/2+28, 18, ColTextDim)
+			c.CenterText(loc.T("no scenario selected"), float32(c.H)/2, 26, ColTextWarn)
+			c.CenterText(loc.T("go back to the scenario list and choose a map"), float32(c.H)/2+28, 18, ColTextDim)
 			return
 		}
-		c.CenterText("у сценария нет игроков", float32(c.H)/2, 26, ColTextWarn)
-		c.CenterText("на карте нет объектов starting_position", float32(c.H)/2+28, 18, ColTextDim)
+		c.CenterText(loc.T("the scenario has no players"), float32(c.H)/2, 26, ColTextWarn)
+		c.CenterText(loc.T("the map has no starting_position objects"), float32(c.H)/2+28, 18, ColTextDim)
 		return
 	}
 
@@ -383,23 +384,23 @@ func (p *Players) Draw(c *scene.Ctx) {
 	p.back.draw(c, 22)
 
 	c.Text(p.hint(), playersLeft, float32(c.H)-136, 16, ColTextDim)
-	c.CenterText("сцена: выбор игроков", float32(c.H)-36, 18, ColTextDim)
+	c.CenterText(loc.T("scene: player selection"), float32(c.H)-36, 18, ColTextDim)
 }
 
 // subtitle — строка под заголовком: какой сценарий выбран и сколько в нём
 // игроков.
 func (p *Players) subtitle() string {
 	if Selected == "" {
-		return "выберите сценарий в списке слева"
+		return loc.T("choose a scenario from the list on the left")
 	}
-	return fmt.Sprintf("%s — игроков: %d", Selected, len(p.slots))
+	return fmt.Sprintf(loc.T("%s — players: %d"), Selected, len(p.slots))
 }
 
 // drawSlots рисует список игроков сценария и выбранной для каждого расы.
 func (p *Players) drawSlots(c *scene.Ctx) {
-	c.Text("Игроки сценария", playersLeft, playersTop-16, 20, ColTextDim)
+	c.Text(loc.T("Scenario players"), playersLeft, playersTop-16, 20, ColTextDim)
 	if len(p.slots) == 0 {
-		c.Text("у сценария нет игроков", playersLeft, playersTop+20, 18, ColTextWarn)
+		c.Text(loc.T("the scenario has no players"), playersLeft, playersTop+20, 18, ColTextWarn)
 		return
 	}
 	for i, s := range p.slots {
@@ -414,11 +415,11 @@ func (p *Players) drawSlots(c *scene.Ctx) {
 		if i == p.sel {
 			c.Rect(playersLeft, y, 3, playersRowH, ColAccent)
 		}
-		c.Text(fmt.Sprintf("Игрок %d", s.Owner), playersLeft+12, y+playersRowH/2+6, 18, col)
+		c.Text(fmt.Sprintf(loc.T("Player %d"), s.Owner), playersLeft+12, y+playersRowH/2+6, 18, col)
 		if s.Owner == p.own {
-			c.Text("вы", playersLeft+110, y+playersRowH/2+6, 18, ColTextWarn)
+			c.Text(loc.T("you"), playersLeft+110, y+playersRowH/2+6, 18, ColTextWarn)
 		}
-		race := "случайная"
+		race := loc.T("random")
 		if i2, ok := p.pick[s.Owner]; ok && i2 >= 0 && i2 < len(p.races) {
 			race = p.races[i2].Label()
 		}
@@ -429,9 +430,9 @@ func (p *Players) drawSlots(c *scene.Ctx) {
 
 // drawRaces рисует список рас модуля.
 func (p *Players) drawRaces(c *scene.Ctx) {
-	c.Text("Расы", playersRight(), playersTop-16, 20, ColTextDim)
+	c.Text(loc.T("Races"), playersRight(), playersTop-16, 20, ColTextDim)
 	if len(p.races) == 0 {
-		c.Text("в модуле нет играбельных рас", playersRight(), playersTop+20, 18, ColTextWarn)
+		c.Text(loc.T("the module has no playable races"), playersRight(), playersTop+20, 18, ColTextWarn)
 		return
 	}
 	for i := range p.raceItems {
@@ -467,7 +468,7 @@ func (p *Players) drawOwn(c *scene.Ctx) {
 		return
 	}
 	y := p.ownItems[0].y
-	c.Text("Ваш игрок", playersLeft, y-24, 20, ColTextDim)
+	c.Text(loc.T("Your player"), playersLeft, y-24, 20, ColTextDim)
 	for i := range p.ownItems {
 		it := &p.ownItems[i]
 		bg := ColPanel
@@ -490,5 +491,5 @@ func (p *Players) drawOwn(c *scene.Ctx) {
 
 // hint — подсказка по управлению.
 func (p *Players) hint() string {
-	return "колесо — прокрутка, клик по игроку — выбрать слот, клик по расе — назначить её слоту, Enter — начать"
+	return loc.T("wheel — scroll, click a player — select a slot, click a race — assign it to the slot, Enter — start")
 }

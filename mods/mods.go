@@ -236,6 +236,18 @@ func (l *Library) Tree() *modapi.ModTree {
 	return l.tree
 }
 
+// ReadFile reads one file from the merged module tree. It returns an error
+// until loading is complete or if the virtual resource is absent.
+func (l *Library) ReadFile(virtualPath string) ([]byte, error) {
+	l.mu.RLock()
+	tree := l.tree
+	l.mu.RUnlock()
+	if tree == nil {
+		return nil, fmt.Errorf("module tree is not ready")
+	}
+	return tree.ReadFile(virtualPath)
+}
+
 // Scenarios — сценарии модуля, отсортированные по имени файла.
 func (l *Library) Scenarios() []Scenario {
 	l.mu.RLock()

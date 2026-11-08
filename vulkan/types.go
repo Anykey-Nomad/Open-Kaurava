@@ -147,12 +147,12 @@ const (
 type ImageLayout int32
 
 const (
-	ImageLayoutUndefined                        ImageLayout = 0
-	ImageLayoutColorAttachmentOptimal           ImageLayout = 2
-	ImageLayoutDepthStencilAttachmentOptimal    ImageLayout = 3
-	ImageLayoutShaderReadOnlyOptimal            ImageLayout = 5
-	ImageLayoutTransferDstOptimal               ImageLayout = 7
-	ImageLayoutPresentSrcKHR                    ImageLayout = 1000001002
+	ImageLayoutUndefined                     ImageLayout = 0
+	ImageLayoutColorAttachmentOptimal        ImageLayout = 2
+	ImageLayoutDepthStencilAttachmentOptimal ImageLayout = 3
+	ImageLayoutShaderReadOnlyOptimal         ImageLayout = 5
+	ImageLayoutTransferDstOptimal            ImageLayout = 7
+	ImageLayoutPresentSrcKHR                 ImageLayout = 1000001002
 )
 
 // SharingMode — VkSharingMode.
@@ -231,7 +231,14 @@ type (
 
 const (
 	DescriptorTypeCombinedImageSampler DescriptorType = 1
+	// DescriptorTypeStorageBuffer — SSBO (VK_DESCRIPTOR_TYPE_STORAGE_BUFFER = 7):
+	// палитра костей скиннинга в вершинном шейдере.
+	DescriptorTypeStorageBuffer DescriptorType = 7
 )
+
+// FormatR32G32B32ASInt — RGBA32_SINT (VK_FORMAT_R32G32B32A32_SINT = 110):
+// индексы костей вершины.
+const FormatR32G32B32ASInt Format = 110
 
 const (
 	VertexInputRateVertex         VertexInputRate   = 0
@@ -318,10 +325,10 @@ const (
 	AccessDepthStencilAttachmentReadBit  uint32 = 0x00000200
 	AccessDepthStencilAttachmentWriteBit uint32 = 0x00000400
 	AccessMemoryReadBit                  uint32 = 0x00008000
-	AccessShaderReadBit           uint32 = 0x00000010
-	AccessTransferReadBit         uint32 = 0x00000800
-	AccessTransferWriteBit        uint32 = 0x00001000
-	AccessHostWriteBit            uint32 = 0x00002000
+	AccessShaderReadBit                  uint32 = 0x00000010
+	AccessTransferReadBit                uint32 = 0x00000800
+	AccessTransferWriteBit               uint32 = 0x00001000
+	AccessHostWriteBit                   uint32 = 0x00002000
 
 	CommandPoolCreateTransientBit          uint32 = 0x00000001
 	CommandPoolCreateResetCommandBufferBit uint32 = 0x00000002
@@ -337,10 +344,12 @@ const (
 	CompositeAlphaPostMultipliedBitKHR uint32 = 0x00000004
 	CompositeAlphaInheritBitKHR        uint32 = 0x00000008
 
-	BufferUsageTransferSrcBit  uint32 = 0x00000001
-	BufferUsageTransferDstBit  uint32 = 0x00000002
-	BufferUsageIndexBufferBit  uint32 = 0x00000040
-	BufferUsageVertexBufferBit uint32 = 0x00000080
+	BufferUsageTransferSrcBit uint32 = 0x00000001
+	BufferUsageTransferDstBit uint32 = 0x00000002
+	// StorageBufferBit — палитра костей скиннинга (VK_BUFFER_USAGE_STORAGE_BUFFER_BIT).
+	BufferUsageStorageBufferBit uint32 = 0x00000020
+	BufferUsageIndexBufferBit   uint32 = 0x00000040
+	BufferUsageVertexBufferBit  uint32 = 0x00000080
 
 	MemoryPropertyDeviceLocalBit  uint32 = 0x00000001
 	MemoryPropertyHostVisibleBit  uint32 = 0x00000002

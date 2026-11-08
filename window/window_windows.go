@@ -425,6 +425,8 @@ func keyFromVK(vk uintptr) Key {
 		return KeyTab
 	case 0x08:
 		return KeyBackspace
+	case 0x2E:
+		return KeyDelete
 	case 0x25:
 		return KeyLeft
 	case 0x27:

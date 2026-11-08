@@ -2,6 +2,7 @@ package scenes
 
 import (
 	"fmt"
+	"github.com/Anykey-Nomad/Open-Kaurava/loc"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -62,7 +63,7 @@ func (s *PlayerSetup) RaceLabel(slot int) string {
 	if i := s.RaceIndex(slot); i >= 0 && i < len(s.Races) {
 		return s.Races[i].Label()
 	}
-	return "случайная"
+	return loc.T("random")
 }
 
 // SortedSlots — слоты по номеру игрока.

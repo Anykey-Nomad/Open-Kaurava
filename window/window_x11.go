@@ -371,6 +371,8 @@ func keyFromKeysym(sym uint64) Key {
 		return KeyTab
 	case 0xFF08: // XK_BackSpace
 		return KeyBackspace
+	case 0xFFFF: // XK_Delete
+		return KeyDelete
 	case 0xFF51: // XK_Left
 		return KeyLeft
 	case 0xFF53: // XK_Right

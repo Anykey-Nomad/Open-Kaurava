@@ -2,6 +2,7 @@ package scenes
 
 import (
 	"fmt"
+	"github.com/Anykey-Nomad/Open-Kaurava/loc"
 
 	"github.com/Anykey-Nomad/Open-Kaurava/mods"
 	"github.com/Anykey-Nomad/Open-Kaurava/scene"
@@ -99,7 +100,7 @@ func (s *Scenarios) Update(c *scene.Ctx, dt float64) {
 	}
 
 	// Кнопка «Назад» под списком.
-	s.back.label = "Назад"
+	s.back.label = loc.T("Back")
 	s.back.x = listLeft
 	s.back.y = listTop + float32(rows)*(rowHeight+rowGap) + 16
 	s.back.w = listWidth
@@ -186,14 +187,14 @@ func (s *Scenarios) choose(idx int) {
 // Draw рисует список сценариев, панель модуля и кнопку «Назад».
 func (s *Scenarios) Draw(c *scene.Ctx) {
 	c.Rect(0, 0, float32(c.W), float32(c.H), ColBG)
-	c.CenterText("Выбор сценария", 120, 40, ColText)
-	c.CenterText("загрузить уровень и начать игру", 156, 20, ColTextDim)
+	c.CenterText(loc.T("Scenario selection"), 120, 40, ColText)
+	c.CenterText(loc.T("load a level and start the game"), 156, 20, ColTextDim)
 
 	s.drawList(c)
 	s.drawPanel(c)
 	s.back.draw(c, 22)
 
-	c.CenterText("сцена: выбор сценария", float32(c.H)-36, 18, ColTextDim)
+	c.CenterText(loc.T("scene: scenario selection"), float32(c.H)-36, 18, ColTextDim)
 }
 
 // drawList рисует список сценариев и полосу прокрутки.
@@ -203,7 +204,7 @@ func (s *Scenarios) drawList(c *scene.Ctx) {
 	c.Rect(listLeft-12, listTop-12, listWidth+24, h+24, ColPanel)
 
 	if len(s.items) == 0 {
-		c.Text("сценарии не найдены", listLeft, listTop+20, 20, ColTextDim)
+		c.Text(loc.T("no scenarios found"), listLeft, listTop+20, 20, ColTextDim)
 		return
 	}
 	for i := 0; i < s.rows; i++ {
@@ -259,16 +260,16 @@ func (s *Scenarios) drawPanel(c *scene.Ctx) {
 	}
 
 	if s.lib == nil {
-		line("модуль не загружен", ColTextDim)
+		line(loc.T("module not loaded"), ColTextDim)
 		return
 	}
 	state, err, elapsed := s.lib.Status()
 	mod := s.lib.Module()
 	switch state {
 	case mods.StateLoading:
-		line("модуль загружается…", ColTextWarn)
+		line(loc.T("module is loading…"), ColTextWarn)
 	case mods.StateFailed:
-		line("ошибка загрузки модуля:", ColTextWarn)
+		line(loc.T("module load error:"), ColTextWarn)
 		if err != nil {
 			line(err.Error(), ColTextDim)
 		}
@@ -277,18 +278,18 @@ func (s *Scenarios) drawPanel(c *scene.Ctx) {
 	if mod == nil {
 		return
 	}
-	line("модуль: "+mod.Name, ColText)
+	line(loc.T("module: ")+mod.Name, ColText)
 	if mod.UIName != "" {
 		line(mod.UIName, ColTextDim)
 	}
-	line("файл: "+mod.Path, ColTextDim)
-	line(fmt.Sprintf("модулей в игре: %d", len(s.lib.Modules())), ColTextDim)
-	line(fmt.Sprintf("файлов в дереве: %d", s.lib.FileCount()), ColTextDim)
-	line(fmt.Sprintf("сценариев: %d", len(s.scenarios)), ColText)
-	line(fmt.Sprintf("дерево собрано за %s", elapsed.Round(1e6)), ColTextDim)
+	line(loc.T("file: ")+mod.Path, ColTextDim)
+	line(fmt.Sprintf(loc.T("modules in game: %d"), len(s.lib.Modules())), ColTextDim)
+	line(fmt.Sprintf(loc.T("files in tree: %d"), s.lib.FileCount()), ColTextDim)
+	line(fmt.Sprintf(loc.T("scenarios: %d"), len(s.scenarios)), ColText)
+	line(fmt.Sprintf(loc.T("tree built in %s"), elapsed.Round(1e6)), ColTextDim)
 
 	ty += 8
-	line("выбрано:", ColTextDim)
+	line(loc.T("selected:"), ColTextDim)
 	if SelectedPath != "" {
 		c.Text(Selected, x+24, ty, px, ColAccent)
 		ty += 26
@@ -298,7 +299,7 @@ func (s *Scenarios) drawPanel(c *scene.Ctx) {
 	}
 
 	ty += 30
-	line("колесо — прокрутка, ↑↓ — выбор, Enter — выбрать", ColTextDim)
+	line(loc.T("wheel — scroll, ↑↓ — select, Enter — choose"), ColTextDim)
 }
 
 // maxInt — большее из двух чисел.

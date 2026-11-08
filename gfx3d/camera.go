@@ -16,14 +16,15 @@ const (
 
 // Camera — орбитальная камера вокруг точки Target в мире Z-up.
 type Camera struct {
-	Yaw, Pitch          float64
-	Distance            float64
-	MinDist, MaxDist    float64
-	Target              [3]float64
-	FOV                 float64
-	GroundMin           [2]float64
-	GroundMax           [2]float64
-	CellSize            float64
+	Yaw, Pitch       float64
+	Distance         float64
+	MinDist, MaxDist float64
+	Target           [3]float64
+	FOV              float64
+	GroundMin        [2]float64
+	GroundMax        [2]float64
+	CellSize         float64
+	GroundHeight     func(x, y float64) float64
 }
 
 // NewCamera создаёт камеру с настройками по умолчанию.
@@ -53,6 +54,7 @@ func (c *Camera) FitToScene(groundMin, groundMax [2]float32, centerZ float32, ce
 	cx := (c.GroundMin[0] + c.GroundMax[0]) * 0.5
 	cy := (c.GroundMin[1] + c.GroundMax[1]) * 0.5
 	c.Target = [3]float64{cx, cy, float64(centerZ)}
+	c.UpdateTargetHeight()
 
 	w := c.GroundMax[0] - c.GroundMin[0]
 	d := c.GroundMax[1] - c.GroundMin[1]
@@ -113,7 +115,10 @@ func (c *Camera) Move(forward, strafe, dt float64) {
 	}
 	speed := math.Max(c.CellSize*12, 35.0)
 	fx, fy := -math.Cos(c.Yaw), -math.Sin(c.Yaw)
-	rx, ry := -fy, fx
+	// Вектор «вправо» — поворот направления взгляда на 90° по часовой стрелке:
+	// при yaw = 0 камера смотрит вдоль -X, а вправо от неё — +Y. Обратный
+	// поворот давал вектор влево, из-за чего A и D работали наоборот.
+	rx, ry := fy, -fx
 	dist := speed * dt
 	c.Target[0] += (fx*forward + rx*strafe) * dist
 	c.Target[1] += (fy*forward + ry*strafe) * dist
@@ -135,12 +140,51 @@ func (c *Camera) Zoom(scroll float64) {
 	}
 }
 
+// SetGroundHeight supplies the sampled terrain height at a world XY position.
+func (c *Camera) SetGroundHeight(sample func(x, y float64) float64) {
+	c.GroundHeight = sample
+}
+
+// UpdateTargetHeight keeps the orbit pivot on the ground surface.
+func (c *Camera) UpdateTargetHeight() {
+	if c.GroundHeight != nil {
+		c.Target[2] = c.GroundHeight(c.Target[0], c.Target[1])
+	}
+}
+
 func (c *Camera) clampTarget() {
 	if c.GroundMax[0] > c.GroundMin[0] {
 		c.Target[0] = math.Max(c.GroundMin[0], math.Min(c.GroundMax[0], c.Target[0]))
 	}
 	if c.GroundMax[1] > c.GroundMin[1] {
 		c.Target[1] = math.Max(c.GroundMin[1], math.Min(c.GroundMax[1], c.Target[1]))
+	}
+	c.UpdateTargetHeight()
+}
+
+// Eye — положение камеры в мире: точка цели плюс направление взгляда на
+// расстояние орбиты. Нужна эффектам: квады частиц разворачиваются к ней.
+func (c Camera) Eye() [3]float64 {
+	pitch := c.Pitch
+	if pitch > 1.5 {
+		pitch = 1.5
+	}
+	if pitch < -1.5 {
+		pitch = -1.5
+	}
+	dist := c.Distance
+	if dist <= 0 {
+		dist = 1
+	}
+	dir := [3]float64{
+		math.Cos(c.Yaw) * math.Cos(pitch),
+		math.Sin(c.Yaw) * math.Cos(pitch),
+		math.Sin(pitch),
+	}
+	return [3]float64{
+		c.Target[0] + dir[0]*dist,
+		c.Target[1] + dir[1]*dist,
+		c.Target[2] + dir[2]*dist,
 	}
 }
 
@@ -151,6 +195,82 @@ func (c *Camera) axes() (forward, right [2]float64) {
 
 // ViewProj строит column-major матрицу ViewProj (16 float32) для Vulkan:
 // Z в диапазоне [0, 1] и перевёрнутая ось Y клип-пространства.
+// RayFromScreen unprojects a top-left-origin pixel into a world-space ray.
+func (c *Camera) RayFromScreen(x, y, width, height int) (origin, direction [3]float64, ok bool) {
+	if width <= 0 || height <= 0 {
+		return origin, direction, false
+	}
+	inverse, ok := inverseMat4(c.ViewProj(width, height))
+	if !ok {
+		return origin, direction, false
+	}
+	nx := 2*float64(x)/float64(width) - 1
+	ny := 2*float64(y)/float64(height) - 1
+	near, okNear := unproject(inverse, [4]float64{nx, ny, 0, 1})
+	far, okFar := unproject(inverse, [4]float64{nx, ny, 1, 1})
+	if !okNear || !okFar {
+		return origin, direction, false
+	}
+	origin = [3]float64{near[0], near[1], near[2]}
+	direction = normalize3([3]float64{far[0] - near[0], far[1] - near[1], far[2] - near[2]})
+	return origin, direction, direction != ([3]float64{})
+}
+
+func inverseMat4(matrix [16]float32) ([16]float64, bool) {
+	var rows [4][8]float64
+	for row := 0; row < 4; row++ {
+		for col := 0; col < 4; col++ {
+			rows[row][col] = float64(matrix[col*4+row])
+		}
+		rows[row][row+4] = 1
+	}
+	for col := 0; col < 4; col++ {
+		pivot := col
+		for row := col + 1; row < 4; row++ {
+			if math.Abs(rows[row][col]) > math.Abs(rows[pivot][col]) {
+				pivot = row
+			}
+		}
+		if math.Abs(rows[pivot][col]) < 1e-12 {
+			return [16]float64{}, false
+		}
+		rows[col], rows[pivot] = rows[pivot], rows[col]
+		divisor := rows[col][col]
+		for j := 0; j < 8; j++ {
+			rows[col][j] /= divisor
+		}
+		for row := 0; row < 4; row++ {
+			if row == col {
+				continue
+			}
+			factor := rows[row][col]
+			for j := 0; j < 8; j++ {
+				rows[row][j] -= factor * rows[col][j]
+			}
+		}
+	}
+	var inverse [16]float64
+	for row := 0; row < 4; row++ {
+		for col := 0; col < 4; col++ {
+			inverse[col*4+row] = rows[row][col+4]
+		}
+	}
+	return inverse, true
+}
+
+func unproject(inverse [16]float64, point [4]float64) ([3]float64, bool) {
+	var world [4]float64
+	for row := 0; row < 4; row++ {
+		for col := 0; col < 4; col++ {
+			world[row] += inverse[col*4+row] * point[col]
+		}
+	}
+	if math.Abs(world[3]) < 1e-12 {
+		return [3]float64{}, false
+	}
+	return [3]float64{world[0] / world[3], world[1] / world[3], world[2] / world[3]}, true
+}
+
 func (c *Camera) ViewProj(width, height int) [16]float32 {
 	if width <= 0 {
 		width = 1
@@ -188,6 +308,28 @@ func (c *Camera) ViewProj(width, height int) [16]float32 {
 	far := dist*10 + 1500
 	proj := perspectiveVulkan(fov*math.Pi/180, float64(width)/float64(height), near, far)
 	return mulMat4(proj, view)
+}
+
+// Project переводит точку мира в пиксели кадра. ok=false — точка за
+// камерой или вне глубины кадра (её всё равно не видно).
+func (c *Camera) Project(point [3]float64, width, height int) (x, y float64, ok bool) {
+	vp := c.ViewProj(width, height)
+	clip := [4]float64{}
+	for row := 0; row < 4; row++ {
+		clip[row] = float64(vp[row])*point[0] + float64(vp[4+row])*point[1] +
+			float64(vp[8+row])*point[2] + float64(vp[12+row])
+	}
+	if clip[3] <= 1e-9 {
+		return 0, 0, false
+	}
+	ndcX, ndcY, ndcZ := clip[0]/clip[3], clip[1]/clip[3], clip[2]/clip[3]
+	if ndcZ < 0 || ndcZ > 1 {
+		return 0, 0, false
+	}
+	x = (ndcX*0.5 + 0.5) * float64(width)
+	// Вертикаль кадра и NDC совпадают по направлению (Y вниз).
+	y = (ndcY*0.5 + 0.5) * float64(height)
+	return x, y, true
 }
 
 // lookAt возвращает column-major матрицу вида 4x4.

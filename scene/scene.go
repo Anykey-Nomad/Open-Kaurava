@@ -16,6 +16,12 @@ type Click struct {
 	X, Y   int
 }
 
+// OnUIClick — звук щелчка по элементу интерфейса. Вызывается один раз
+// за кадр, на первом попавшем клике ЛКМ внутри прямоугольника кнопки
+// (см. ClickedAt). Ставится приложением (пакет scenes — sfx.UIClick);
+// nil в тестах и когда звуки не подключены.
+var OnUIClick func()
+
 // Input — снимок ввода за кадр.
 type Input struct {
 	// MouseX, MouseY — текущая позиция курсора в пикселях кадра.
@@ -37,6 +43,14 @@ type Input struct {
 	// Dragging — идёт перетаскивание; рамка в DragX..DragH.
 	Dragging                   bool
 	DragX, DragY, DragW, DragH int
+	// DragEnded — перетаскивание завершено в этом кадре; DragButton — его
+	// кнопка, DragFromX/Y — точка нажатия, а DragX..DragH — итоговая рамка.
+	DragEnded            bool
+	DragButton           int
+	DragFromX, DragFromY int
+	// DragCurrentButton — кнопка идущего перетаскивания: рамку выделения
+	// рисует только левая, камера крутится правой.
+	DragCurrentButton int
 }
 
 // Ctx — контекст кадра, доступный сцене.
@@ -57,6 +71,9 @@ type Ctx struct {
 	Switch func(name string)
 	// Quit — попросить приложение закрыться.
 	Quit func()
+	// uiClicked — щелчок по интерфейсу уже озвучен в этом кадре
+	// (контекст создаётся заново каждый кадр, см. main).
+	uiClicked bool
 }
 
 // Rect рисует сплошной прямоугольник.
@@ -95,10 +112,17 @@ func (c *Ctx) Hover(x, y, w, h float32) bool {
 }
 
 // ClickedAt сообщает, что в этом кадре был клик внутри прямоугольника.
+// Первый клик ЛКМ в прямоугольнике озвучивается через OnUIClick — так
+// щелчок звучит один раз, даже если прямоугольник проверяют несколько
+// кнопок. Правая кнопка звук не даёт: ею отдают приказы.
 func (c *Ctx) ClickedAt(x, y, w, h float32) bool {
 	for _, cl := range c.Input.Clicks {
 		mx, my := float32(cl.X), float32(cl.Y)
 		if mx >= x && mx < x+w && my >= y && my < y+h {
+			if cl.Button == 1 && OnUIClick != nil && !c.uiClicked {
+				c.uiClicked = true
+				OnUIClick()
+			}
 			return true
 		}
 	}

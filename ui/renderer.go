@@ -44,8 +44,11 @@ type Renderer struct {
 	imgMem     vulkan.DeviceMemory
 	view       vulkan.ImageView
 	pipeline   vulkan.Pipeline
+	// mipLevels — сколько mip-уровней в картине атласа.
+	mipLevels int
 
 	cmdPool  vulkan.CommandPool
+	atlasCmd vulkan.CommandBuffer
 	vert     []vulkan.BufferMemory
 	frames   int
 	maxVerts int
@@ -92,25 +95,54 @@ func NewRenderer(api *vulkan.API, dev vulkan.Device, swap *vulkan.Swapchain, que
 	return r, nil
 }
 
+// atlasFormat — формат картины атласа. Пиксели арта уже в sRGB, поэтому если
+// кадр тоже в sRGB, текстура читается как sRGB: иначе значения трактуются
+// как линейные и аппаратура кодирует их в sRGB второй раз — панели HUD
+// высветляются. Так же поступает и 3D-рендерер.
+func (r *Renderer) atlasFormat() vulkan.Format {
+	if r.swap != nil && isSRGBFormat(r.swap.Format) {
+		return vulkan.FormatR8G8B8A8SRGB
+	}
+	return vulkan.FormatR8G8B8A8UNORM
+}
+
+// isSRGBFormat сообщает, что формат кадра кодирует цвет в sRGB.
+func isSRGBFormat(f vulkan.Format) bool {
+	return f == vulkan.FormatB8G8R8A8SRGB || f == vulkan.FormatR8G8B8A8SRGB
+}
+
 // createResources создаёт картину атласа, сэмплер, дескрипторы и пайплайн.
 func (r *Renderer) createResources() error {
 	a := r.api
 
-	// Картина атласа: одноканальная, в неё грузим покрытие глифов.
-	img, mem, err := a.CreateImage2D(r.dev, vulkan.FormatR8UNorm, r.Atlas.W, r.Atlas.H,
-		vulkan.ImageUsageTransferDstBit|vulkan.ImageUsageSampledBit)
+	// RGBA-картина атласа для глифов и полноцветных UI-текстур. Уровней —
+	// полная цепочка: арт HUD рисуется уменьшенным (0.78×), и без мипов
+	// мелкая графика алиасит в чёрные точки и радужный муар.
+	r.mipLevels = r.Atlas.Levels()
+	format := r.atlasFormat()
+	img, mem, err := a.CreateImage2DMipped(r.dev, format, r.Atlas.W, r.Atlas.H,
+		r.mipLevels, vulkan.ImageUsageTransferDstBit|vulkan.ImageUsageSampledBit)
 	if err != nil {
 		return fmt.Errorf("ui: картина атласа: %w", err)
 	}
 	r.img, r.imgMem = img, mem
 
-	view, err := a.CreateImageView(r.dev, img, vulkan.FormatR8UNorm, vulkan.ImageAspectColorBit)
+	view, err := a.CreateImageViewLevels(r.dev, img, format, vulkan.ImageAspectColorBit, r.mipLevels)
 	if err != nil {
 		return fmt.Errorf("ui: view атласа: %w", err)
 	}
 	r.view = view
 
-	sampler, err := a.DefaultSampler(r.dev)
+	// MaxLod — последний уровень цепочки: без него цепочка не используется.
+	sampler, err := a.CreateSampler(r.dev, vulkan.SamplerCreateInfo{
+		MagFilter:    vulkan.FilterLinear,
+		MinFilter:    vulkan.FilterLinear,
+		MipmapMode:   vulkan.SamplerMipmapModeLinear,
+		AddressModeU: vulkan.SamplerAddressModeClampToEdge,
+		AddressModeV: vulkan.SamplerAddressModeClampToEdge,
+		AddressModeW: vulkan.SamplerAddressModeClampToEdge,
+		MaxLod:       float32(r.mipLevels - 1),
+	})
 	if err != nil {
 		return fmt.Errorf("ui: сэмплер: %w", err)
 	}
@@ -321,6 +353,18 @@ func (r *Renderer) NewFrame() *Draw {
 // Drawer возвращает текущий батчер (для сцен, рисующих вне NewFrame).
 func (r *Renderer) Drawer() *Draw { return r.draw }
 
+// LoadImage decodes a supported image and uploads it to the CPU atlas once.
+func (r *Renderer) LoadImage(key string, data []byte) (Glyph, error) {
+	if region, ok := r.Atlas.LookupImage(key); ok {
+		return region, nil
+	}
+	img, err := decodeImage(data)
+	if err != nil {
+		return Glyph{}, fmt.Errorf("ui: decode %s: %w", key, err)
+	}
+	return r.Atlas.Image(key, img)
+}
+
 // Prepare готовит кадр к записи: доливает новые глифы в картину атласа
 // и копирует вершины в буфер кадра.
 //
@@ -376,7 +420,17 @@ func (r *Renderer) uploadAtlas() error {
 		return err
 	}
 
-	staging, err := a.CreateBuffer(r.dev, uint64(len(r.Atlas.Pix)),
+	// Мип-цепочка целиком, уровень за уровнем без дыр: так все уровни
+	// уезжают в GPU одной командой записи в staging-буфер.
+	chain := r.Atlas.MipChain()
+	pixels := make([]byte, 0, len(r.Atlas.Pix)*4/3)
+	offsets := make([]uint64, len(chain))
+	for i, level := range chain {
+		offsets[i] = uint64(len(pixels))
+		pixels = append(pixels, level.Pix...)
+	}
+
+	staging, err := a.CreateBuffer(r.dev, uint64(len(pixels)),
 		vulkan.BufferUsageTransferSrcBit,
 		vulkan.MemoryPropertyHostVisibleBit|vulkan.MemoryPropertyHostCoherentBit)
 	if err != nil {
@@ -384,15 +438,23 @@ func (r *Renderer) uploadAtlas() error {
 	}
 	defer a.DestroyBuffer(r.dev, &staging)
 
-	if err := a.WriteBuffer(r.dev, staging, r.Atlas.Pix); err != nil {
+	if err := a.WriteBuffer(r.dev, staging, pixels); err != nil {
 		return err
 	}
 
-	cmds, err := a.AllocateCommandBuffers(r.dev, r.cmdPool, 1)
-	if err != nil {
-		return fmt.Errorf("ui: командный буфер заливки: %w", err)
+	// Командный буфер заливки кэшируется: аллокация на каждый грязный кадр
+	// (новые глифы) разрастает пул без возможности освободить буферы.
+	if r.atlasCmd == 0 {
+		cmds, err := a.AllocateCommandBuffers(r.dev, r.cmdPool, 1)
+		if err != nil {
+			return fmt.Errorf("ui: командный буфер заливки: %w", err)
+		}
+		r.atlasCmd = cmds[0]
 	}
-	cmd := cmds[0]
+	cmd := r.atlasCmd
+	if err := a.ResetCommandBuffer(cmd); err != nil {
+		return fmt.Errorf("ui: сброс буфера заливки: %w", err)
+	}
 	if err := a.BeginCommandBuffer(cmd, 0); err != nil {
 		return err
 	}
@@ -409,13 +471,15 @@ func (r *Renderer) uploadAtlas() error {
 		SubresourceRange: vulkan.ImageSubresourceRange{
 			AspectMask:     vulkan.ImageAspectColorBit,
 			BaseMipLevel:   0,
-			LevelCount:     1,
+			LevelCount:     uint32(len(chain)),
 			BaseArrayLayer: 0,
 			LayerCount:     1,
 		},
 	}
 	a.CmdImageBarrier(cmd, &barrier, vulkan.PipelineStageTopOfPipeBit, vulkan.PipelineStageTransferBit)
-	a.CmdCopyBufferToImage(cmd, staging.Buffer, r.img, r.Atlas.W, r.Atlas.H)
+	for i, level := range chain {
+		a.CmdCopyBufferToImageLevel(cmd, staging.Buffer, r.img, level.W, level.H, i, offsets[i])
+	}
 
 	barrier.SrcAccessMask = vulkan.AccessTransferWriteBit
 	barrier.DstAccessMask = vulkan.AccessShaderReadBit

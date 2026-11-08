@@ -124,12 +124,25 @@ func (a *API) ReadBuffer(dev Device, b BufferMemory, dst []byte) error {
 
 // CreateImage2D создаёт 2D-картину (атлас глифов) и память под неё.
 func (a *API) CreateImage2D(dev Device, format Format, width, height int, usage uint32) (Image, DeviceMemory, error) {
+	return a.createImage2D(dev, format, width, height, 1, usage)
+}
+
+// CreateImage2DMipped создаёт 2D-картину с mip-уровнями. Уровни заливаются
+// по одному (CmdCopyBufferToImageLevel): без них уменьшенный арт алиасит.
+func (a *API) CreateImage2DMipped(dev Device, format Format, width, height, mipLevels int, usage uint32) (Image, DeviceMemory, error) {
+	if mipLevels < 1 {
+		mipLevels = 1
+	}
+	return a.createImage2D(dev, format, width, height, mipLevels, usage)
+}
+
+func (a *API) createImage2D(dev Device, format Format, width, height, mipLevels int, usage uint32) (Image, DeviceMemory, error) {
 	info := ImageCreateInfo{
 		Type:          StructureTypeImageCreateInfo,
 		ImageType:     ImageType2D,
 		Format:        format,
 		Extent:        Extent3D{Width: uint32(width), Height: uint32(height), Depth: 1},
-		MipLevels:     1,
+		MipLevels:     uint32(mipLevels),
 		ArrayLayers:   1,
 		Samples:       SampleCount1Bit,
 		Tiling:        ImageTilingOptimal,
@@ -215,8 +228,35 @@ func (a *API) CmdCopyBufferToImage(cmd CommandBuffer, buf Buffer, img Image, wid
 	a.vkCmdCopyBufferToImage(cmd, buf, img, ImageLayoutTransferDstOptimal, 1, &region)
 }
 
+// CmdCopyBufferToImageLevel копирует один mip-уровень из буфера в картину:
+// offset — смещение уровня в буфере, level — номер уровня.
+func (a *API) CmdCopyBufferToImageLevel(cmd CommandBuffer, buf Buffer, img Image, width, height, level int, offset uint64) {
+	region := BufferImageCopy{
+		BufferOffset: offset,
+		ImageSubresource: ImageSubresourceLayers{
+			AspectMask: ImageAspectColorBit,
+			MipLevel:   uint32(level),
+			LayerCount: 1,
+		},
+		ImageExtent: Extent3D{Width: uint32(width), Height: uint32(height), Depth: 1},
+	}
+	a.vkCmdCopyBufferToImage(cmd, buf, img, ImageLayoutTransferDstOptimal, 1, &region)
+}
+
 // CreateImageView создаёт 2D-view картину (формат = формат картины).
 func (a *API) CreateImageView(dev Device, img Image, format Format, aspect uint32) (ImageView, error) {
+	return a.createImageView(dev, img, format, aspect, 1)
+}
+
+// CreateImageViewLevels создаёт view на несколько mip-уровней картины.
+func (a *API) CreateImageViewLevels(dev Device, img Image, format Format, aspect uint32, levelCount int) (ImageView, error) {
+	if levelCount < 1 {
+		levelCount = 1
+	}
+	return a.createImageView(dev, img, format, aspect, levelCount)
+}
+
+func (a *API) createImageView(dev Device, img Image, format Format, aspect uint32, levelCount int) (ImageView, error) {
 	info := ImageViewCreateInfo{
 		Type:     StructureTypeImageViewCreateInfo,
 		Image:    img,
@@ -227,7 +267,7 @@ func (a *API) CreateImageView(dev Device, img Image, format Format, aspect uint3
 		SubresourceRange: ImageSubresourceRange{
 			AspectMask:     aspect,
 			BaseMipLevel:   0,
-			LevelCount:     1,
+			LevelCount:     uint32(levelCount),
 			BaseArrayLayer: 0,
 			LayerCount:     1,
 		},
@@ -438,6 +478,23 @@ func WriteDescriptorImage(set DescriptorSet, binding uint32, sampler Sampler, vi
 	}
 }
 
+// WriteDescriptorBuffer собирает WriteDescriptorSet для буферного
+// дескриптора (например, storage-буфера палитры костей).
+func WriteDescriptorBuffer(set DescriptorSet, binding uint32, dtype DescriptorType, buf Buffer, offset, size uint64) WriteDescriptorSet {
+	return WriteDescriptorSet{
+		Type:            StructureTypeWriteDescriptorSet,
+		DstSet:          set,
+		DstBinding:      binding,
+		DescriptorCount: 1,
+		DescriptorType:  dtype,
+		BufferInfo: unsafe.Pointer(&DescriptorBufferInfo{
+			Buffer: buf,
+			Offset: offset,
+			Range:  size,
+		}),
+	}
+}
+
 // CreateSampler создаёт сэмплер.
 func (a *API) CreateSampler(dev Device, info SamplerCreateInfo) (Sampler, error) {
 	info.Type = StructureTypeSamplerCreateInfo
@@ -522,4 +579,10 @@ func (a *API) CmdDraw(cmd CommandBuffer, vertexCount uint32) {
 // CmdDrawIndexed рисует indexCount индексов (1 instance).
 func (a *API) CmdDrawIndexed(cmd CommandBuffer, indexCount uint32) {
 	a.vkCmdDrawIndexed(cmd, indexCount, 1, 0, 0, 0)
+}
+
+// CmdDrawIndexedRange рисует часть индексного буфера: так частицы рисуются
+// батчами по текстуре эффекта, не переписывая буфер на каждый батч.
+func (a *API) CmdDrawIndexedRange(cmd CommandBuffer, indexCount, firstIndex uint32) {
+	a.vkCmdDrawIndexed(cmd, indexCount, 1, firstIndex, 0, 0)
 }
